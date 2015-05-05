@@ -18,59 +18,24 @@ use File::Find;
 # modified 2015-05-04
 # 
 
-exit;
-
-###
-
-#
-# AC3-FFMPEG
-# 
-# use ffmpeg to encode AC-3 files
-# 
-# written by Theron Trowbridge
-# http://therontrowbridge.com
-# 
-# version 1.1.1
-# created 2013-11-09
-# modified 2015-04-29
-# 
-# use six mono WAVE files as sources
-# using standard channel naming convention
-# 	"_L" or "_LEFT" for left
-# 	"_R" or "_RIGHT" for right
-# 	"_C" or "_CENTER" for center
-# 	"_LFE" or "_SUB" for LFE
-# 	"_LS" or "_LSUR" for left surround
-# 	"_RS" or "_RSUR" for right surround
-# 
-# here's the command we want to use:
-# 
-# ffmpeg -i left.wav -i right.wav -i center.wav -i lfe.wav -i left_surround.wav
-# -i right_surround -ab 640k -dialnorm "-24" -center_mixlev 0.707 -surround_mixlev 0.707
-# -filter_complex "[0:a][1:a][2:a][3:a][4:a][5:a] amerge=inputs=6" output_surround.ac3 
-#
-# search through the starting folder looking for ".wav" files and build a list
-# look through list looking for each channel
-# assuming we find them all, build the command and execute
-# 
-# this will require having ffmpeg installd and on the path
-# have an option to output the command to STDOUT
-#
-# version 1.1 - add ability to adjust dialnorm value 
-# 	also changing default dialnorm value to -24 dB (was -27 dB)
-# version 1.1.1 - changing default dialnorm value to -31 dB
-
-my ( $directory_param, $output_param, $execute_param, $recurse_param, $help_param, $dialnorm_param, $version_param, $debug_param );
+my ( $directory_param, $output_param, $recurse_param, $help_param, $version_param, $debug_param );
 my ( @wave_files, $num_wave_files );
 my ( $left_channel, $right_channel, $center_channel, $lfe_channel, $left_surround_channel, $right_surround_channel );
-my ( $ffmpeg_command );
+my ( $centermix_param, $surrmix_param, $lfemix_param, $gain_param );
+my ( $analyze_param, $normalize_param, $limit_param, $bitdepth_param );
 
 # get command line options
 GetOptions( 'directory|d=s'	=>	\$directory_param,
 			'output|o=s'	=>	\$output_param,
-			'execute|x!'	=>	\$execute_param,
 			'recurse|r!'	=>	\$recurse_param,
-			'dialnorm|d=s'	=>	\$dialnorm_param,
+			'centermix=f'	=>	\$centermix_param,
+			'surrmix=f'		=>	\$surrmix_param,
+			'lfemix=f'		=>	\$lfemix_param,
+			'gain=f'		=>	\$gain_param,
+			'analyze!'		=>	\$analyze_param,
+			'normalize=f'	=>	\$normalize_param,
+			'limit!'		=>	\$limit_param,
+			'bitdepth=i'	=>	\$bitdepth_param,
 			'debug'			=>	\$debug_param,
 			'help|?'		=>	\$help_param,
 			'version'		=>	\$version_param );
@@ -79,37 +44,64 @@ if ( $debug_param ) {
 	print "DEBUG: passed parameters:\n";
 	print "directory_param: $directory_param\n";
 	print "output_param: $output_param\n";
-	print "execute_param: $execute_param\n";
 	print "recurse_param: $recurse_param\n";
-	print "dialnorm_param: $dialnorm_param\n";
+	print "centermix_param: $centermix_param\n";
+	print "surrmix_param: $surrmix_param\n";
+	print "lfemix_param: $lfemix_param\n";
+	print "gain_param: $gain_param\n";
+	print "analyze_param: $analyze_param\n";
+	print "normalize_param: $normalize_param\n";
+	print "limit_param: $limit_param\n";
+	print "bitdepth_param: $bitdepth_param\n";
 	print "debug_param: $debug_param\n";
 	print "help_param: $help_param\n";
 	print "version_param: $version_param\n\n";
 }
 
 if ( $version_param ) {
-	print "ac3ffmpeg.pl version 1.1\n";
+	print "downmixSurroundWAVE.pl version 0.1\n";
 	exit;
 }
 
 if ( $help_param ) {
-	print "ac3ffmpeg.pl\n";
-	print "version 1.1\n\n";
+	print "downmixSurroundWAVE.pl\n";
+	print "version 0.1\n\n";
 	print "--directory | -d <path>\n";
 	print "\toptional - defaults to current working directory\n";
 	print "--output | -o\n";
 	print "\toutput file\n";
-	print "\toptional - default is the left channel basename plus \".ac3\"\n";
-	print "--[no]execute | -[no]x\n";
-	print "\tdefault is true - execute the ffmpeg command\n";
-	print "\trequires ffmpeg to be installed and on the search path\n";
-	print "\tif false, outputs command to STDOUT\n";
+	print "\toptional - default is the left channel basename plus \"stereo.wav\"\n";
 	print "--[no]recurse | -[no]r\n";
 	print "\tlook in subfolders for WAVE files\n";
 	print "\tdefault is false - only look in current working directory\n";
-	print "--dialnorm | -d <value>\n";
-	print "\tuse non-default dialnorm value\n";
-	print "\tdefault value is -24 dB\n";
+	print "--centermix <dB>\n";
+	print "\tset downmix matrix value for center channel\n";
+	print "\tif omitted, defaults to -3\n";
+	print "--surrmix <dB>\n";
+	print "\tset downmix matrix value for surround channels\n";
+	print "\tif omitted, defaults to -9\n";
+	print "--lfemix <dB>\n";
+	print "\tset downmix matrix value for LFE channel\n";
+	print "\tif omitted, defaults to -6\n";
+	print "--gain <dB>\n";
+	print "\toverall gain to be applied to stereo stream post downmix\n";
+	print "\t(does not do anything yet\n";
+	print "--[no]analyze\n";
+	print "\tanalyze resulting output levels and report, without outputting\n";
+	print "\treports min and max levels per channel,\n";
+	print "\tand percentage of samples clipping\n";
+	print "\toverrides --output, --normalize, --limit\n";
+	print "\t(does not do anything yet\n";
+	print "--normalize <dB>\n";
+	print "\tnormalize output levels\n";
+	print "\tno default value as undef is no normalization\n";
+	print "\t(does not do anything yet\n";
+	print "--[no]limit\n";
+	print "\tdo soft peak limiting\n";
+	print "\t(does not do anything yet\n";
+	print "--bitdepth [16|24]\n";
+	print "\tset the sample size of output file\n";
+	print "\tdefault is 16 bit\n";
 	print "--version\n";
 	print "\tdisplay version number\n";
 	print "--help | -?\n";
@@ -119,22 +111,31 @@ if ( $help_param ) {
 
 # set parameter defaults
 if ( $directory_param eq undef ) { ; }
-if ( $execute_param eq undef ) { $execute_param = 1; }
 if ( $recurse_param eq undef ) { $recurse_param = 0; }
-# dialnorm is a bit more complicated
-if ( $dialnorm_param eq undef ) { $dialnorm_param = 31; }
-$dialnorm_param = abs( $dialnorm_param );	# remove the negative sign if it was used
-$dialnorm_param = int( $dialnorm_param );	# strip any fractional part
-# make sure it is inside the appropriate range:
-if ( ( abs( $dialnorm_param ) lt 1 ) || ( abs( $dialnorm_param ) gt 31 ) ) { $dialnorm_param = 31; }
+### output_param - left channel, with _stereo.wav appended
+if ( $centermix_param eq undef ) { $centermix_param = -3; }
+if ( $surrmix_param eq undef ) { $surrmix_param = -9; }
+if ( $lfemix_param eq undef ) { $lfemix_param = -6; }
+if ( $gain_param eq undef ) { $gain_param = 0; }
+### the above probably need float validation
+if ( $analyze_param eq undef ) { $analyze_param = 0; }
+### normalize_param is a little weird - need to validate number
+if ( $limit_param eq undef ) { $limit_param = 0; }
+if ( $bitdepth_param eq undef ) { $bitdepth_param = 16; }
 
 if ( $debug_param ) {
 	print "DEBUG: adjusted parameters:\n";
 	print "directory_param: $directory_param\n";
 	print "output_param: $output_param\n";
-	print "execute_param: $execute_param\n";
 	print "recurse_param: $recurse_param\n";
-	print "dialnorm_param: $dialnorm_param\n";
+	print "centermix_param: $centermix_param\n";
+	print "surrmix_param: $surrmix_param\n";
+	print "lfemix_param: $lfemix_param\n";
+	print "gain_param: $gain_param\n";
+	print "analyze_param: $analyze_param\n";
+	print "normalize_param: $normalize_param\n";
+	print "limit_param: $limit_param\n";
+	print "bitdepth_param: $bitdepth_param\n";
 	print "debug_param: $debug_param\n";
 	print "help_param: $help_param\n";
 	print "version_param: $version_param\n\n";
@@ -207,19 +208,31 @@ if ( $right_surround_channel eq undef ) { die "ERROR: can't find right surround 
 # come up with our default output file name if one was not supplied
 if ( $output_param eq undef ) {
 	$output_param = $center_channel;
-	$output_param =~ s/_[^_]*?\.wav$/_51\.ac3/i;
+	$output_param =~ s/_[^_]*?\.wav$/_stereo\.wav/i;
 }
+if ( $debug_param ) { print "DEBUG: output file name: $output_param\n"; }
 
-# build the ffmpeg command
-$ffmpeg_command = "ffmpeg -i $left_channel -i $right_channel -i $center_channel " .
-	"-i $lfe_channel -i $left_surround_channel -i $right_surround_channel " .
-	"-ab 640k -dialnorm \"-$dialnorm_param\" -center_mixlev 0.707 -surround_mixlev 0.707 " .
-	"-filter_complex \"[0:a][1:a][2:a][3:a][4:a][5:a] amerge=inputs=6\" $output_param";
 
-if ( $debug_param ) { print( "DEBUG: ffmpeg command: $ffmpeg_command\n" ); }
 
-if ( $execute_param ) { system( $ffmpeg_command ); }
-else { print "$ffmpeg_command\n"; }
+#####
+
+# open each input file
+# validate that they are all mono WAVE files
+# validate that their spec is all the same (duration, bit depth, sampling rate, ???)
+# figure out how many samples there are
+# create output file
+# generate the output header
+# write output header
+# 
+# step through samples in input files
+# read sample from each file
+# convert to float values
+# do downmix matrix
+# write L/R samples to output file
+# 
+
+#####
+
 
 
 sub find_wave_files {
