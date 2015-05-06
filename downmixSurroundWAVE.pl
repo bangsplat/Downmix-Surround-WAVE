@@ -13,9 +13,9 @@ use File::Find;
 # written by Theron Trowbridge
 # http://therontrowbridge.com
 #
-# version 0.1
+# version 0.2
 # created 2015-05-04
-# modified 2015-05-04
+# modified 2015-05-06
 # 
 
 my ( $directory_param, $output_param, $recurse_param, $help_param, $version_param, $debug_param );
@@ -212,8 +212,6 @@ if ( $output_param eq undef ) {
 }
 if ( $debug_param ) { print "DEBUG: output file name: $output_param\n"; }
 
-
-
 #####
 
 # open each input file
@@ -233,6 +231,17 @@ if ( $debug_param ) { print "DEBUG: output file name: $output_param\n"; }
 
 #####
 
+# open each input file
+
+
+
+
+## subroutines
+
+# dB_to_coef
+#
+# convert decibel value to a coefficient for adjusting sample values
+sub dB_to_coef { return( 10 ** ( @_[0] / 20 ) ); }
 
 
 sub find_wave_files {
@@ -254,3 +263,4 @@ sub clean_path {
 	###
 
 }
+
