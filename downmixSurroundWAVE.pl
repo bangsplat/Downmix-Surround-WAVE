@@ -33,10 +33,9 @@ my ( $left_channel, $right_channel, $center_channel, $lfe_channel, $left_surroun
 my ( $centermix_param, $surrmix_param, $lfemix_param, $gain_param );
 my ( $centermix_coef, $surrmix_coef, $lfemix_coef, $gain_coef );
 my ( $analyze_param, $normalize_param, $limit_param, $bitdepth_param );
-my $result;
-my $buffer;
+my ( $result, $buffer, $done, $non_LR );
 my ( @file_size, @channels, @sample_rate, @bit_depth, @sample_chunk_size, @num_samples );
-my ( @input_sample, @output_sample );
+my ( @input_sample, @input_sample_norm, @output_sample, @output_sample_norm );
 my ( $input_block_align, $input_byte_rate, $input_num_samples );
 # output file header values
 my $output_sub_chunk_1_size = 16;
@@ -429,79 +428,194 @@ print OUTPUT pack( 'L', $output_data_size );		# data chunk size
 
 # now all that's left is the audio data!
 # easy, right?!?!?
-# yeah...
+# yeah, well...
 
 
+### we have to do a complete pass to analyze if we want to normalize the output
 
-### TESTS:
 
-$result = read( LEFT_CHANNEL, $buffer, $input_block_align );
-if ( @sample_rate[LEFT] eq 24 ) {
-	@input_sample[LEFT] = unpack_24_bit_sample( $buffer );
-} else {
-	@input_sample[LEFT] = unpack( "s", $buffer );
+# step through all the samples in the input files
+for( my $i = 0; $i < $input_num_samples; $i++ ) {
+	# read one sample from each file
+	# and stick the sample values into the input_sample array
+	
+	$result = read( LEFT_CHANNEL, $buffer, $input_block_align );
+	if ( $result eq 0 ) { @input_sample[LEFT] = 0; }
+	else {
+		if ( @bit_depth[LEFT] eq 24 ) {
+			@input_sample[LEFT] = unpack_24_bit_sample( $buffer );
+		} else {
+			@input_sample[LEFT] = unpack( "s", $buffer );
+		}
+	}
+	
+	$result = read( RIGHT_CHANNEL, $buffer, $input_block_align );
+	if ( $result eq 0 ) { @input_sample[RIGHT] = 0; }
+	else {
+		if ( @bit_depth[RIGHT] eq 24 ) {
+			@input_sample[RIGHT] = unpack_24_bit_sample( $buffer );
+		} else {
+			@input_sample[RIGHT] = unpack( "s", $buffer );
+		}
+	}
+	
+	$result = read( CENTER_CHANNEL, $buffer, $input_block_align );
+	if ( $result eq 0 ) { @input_sample[CENTER] = 0; }
+	else {
+		if ( @bit_depth[CENTER] eq 24 ) {
+			@input_sample[CENTER] = unpack_24_bit_sample( $buffer );
+		} else {
+			@input_sample[CENTER] = unpack( "s", $buffer );
+		}
+	}
+
+	$result = read( LFE_CHANNEL, $buffer, $input_block_align );
+	if ( $result eq 0 ) { @input_sample[LFE] = 0; }
+	else {
+		if ( @bit_depth[LFE] eq 24 ) {
+			@input_sample[LFE] = unpack_24_bit_sample( $buffer );
+		} else {
+			@input_sample[LFE] = unpack( "s", $buffer );
+		}
+	}
+
+	$result = read( LEFT_SURROUND_CHANNEL, $buffer, $input_block_align );
+	if ( $result eq 0 ) { @input_sample[LEFT_SURROUND] = 0; }
+	else {
+		if ( @bit_depth[LEFT_SURROUND] eq 24 ) {
+			@input_sample[LEFT_SURROUND] = unpack_24_bit_sample( $buffer );
+		} else {
+			@input_sample[LEFT_SURROUND] = unpack( "s", $buffer );
+		}
+	}
+
+	$result = read( RIGHT_SURROUND_CHANNEL, $buffer, $input_block_align );
+	if ( $result eq 0 ) { @input_sample[RIGHT_SURROUND] = 0; }
+	else {
+		if ( @bit_depth[RIGHT_SURROUND] eq 24 ) {
+			@input_sample[RIGHT_SURROUND] = unpack_24_bit_sample( $buffer );
+		} else {
+			@input_sample[RIGHT_SURROUND] = unpack( "s", $buffer );
+		}
+	}
+	
+	if ( $debug_param ) {
+		print "DEBUG: SAMPLE $i\n";
+		print "sample values:\n";
+		print "\t$input_sample[LEFT]\n";
+		print "\t$input_sample[RIGHT]\n";
+		print "\t$input_sample[CENTER]\n";
+		print "\t$input_sample[LFE]\n";
+		print "\t$input_sample[LEFT_SURROUND]\n";
+		print "\t$input_sample[RIGHT_SURROUND]\n\n";
+	}
+	
+	# normalize all the sample values to -1..1 float values
+	if ( @bit_depth[LEFT] eq 24 ) {
+		# OK, so our range is
+		# 	2^24 = 16777216
+		# 	-8388608 .. 8388607
+		# so we can take the value and divide by 8388607
+		# but -8388608/8388607 is slightly below -1
+		# is it enough to worry about?
+		@input_sample_norm[LEFT] = @input_sample[LEFT] / 8388607;
+		@input_sample_norm[RIGHT] = @input_sample[RIGHT] / 8388607;
+		@input_sample_norm[CENTER] = @input_sample[CENTER] / 8388607;
+		@input_sample_norm[LFE] = @input_sample[LFE] / 8388607;
+		@input_sample_norm[LEFT_SURROUND] = @input_sample[LEFT_SURROUND] / 8388607;
+		@input_sample_norm[RIGHT_SURROUND] = @input_sample[RIGHT_SURROUND] / 8388607;
+	} else {
+		# OK, so our range is
+		# 	2^16 = 65536
+		# 	-32768 .. 32767
+		# so we can take the value and divide by 32767
+		# but -32768/32767 is slightly below -1
+		# is it enough to worry about?
+		@input_sample_norm[LEFT] = @input_sample[LEFT] / 32767;
+		@input_sample_norm[RIGHT] = @input_sample[RIGHT] / 32767;
+		@input_sample_norm[CENTER] = @input_sample[CENTER] / 32767;
+		@input_sample_norm[LFE] = @input_sample[LFE] / 32767;
+		@input_sample_norm[LEFT_SURROUND] = @input_sample[LEFT_SURROUND] / 32767;
+		@input_sample_norm[RIGHT_SURROUND] = @input_sample[RIGHT_SURROUND] / 32767;
+	}
+	
+	if ( $debug_param ) {
+		print "sample values (normalized):\n";
+		print "\t$input_sample_norm[LEFT]\n";
+		print "\t$input_sample_norm[RIGHT]\n";
+		print "\t$input_sample_norm[CENTER]\n";
+		print "\t$input_sample_norm[LFE]\n";
+		print "\t$input_sample_norm[LEFT_SURROUND]\n";
+		print "\t$input_sample_norm[RIGHT_SURROUND]\n\n";
+	}
+	
+	# apply downmix matrix and gain
+# L = L -0 dB, C -3 dB, LFE -6 dB, (Ls + Rs -90 degrees) -9 dB
+# R = R -0 dB, C -3 dB, LFE -6 dB, (Ls + Rs +90 degrees) -9 dB
+	## left = LEFT + CENTER*centermix_param + LFE*lfemix_param + LEFT_SURROUND+RIGHT_SURROUND*surmix_param
+	## right = RIGHT + CENTER*centermix_param + LFE*lfemix_param + LEFT_SURROUND+RIGHT_SURROUND*surmix_param
+	
+	# the C LFE LS RS amount applies to both L and R output channels in a LoRo scheme
+	# ideally we should be doing a phase shift and would have to do L and R separately
+	# but for now we can save some time
+	$non_LR = ( @input_sample_norm[CENTER] * $centermix_coef ) +
+		( @input_sample_norm[LFE] * $lfemix_coef ) +
+		( ( @input_sample_norm[LEFT_SURROUND] + @input_sample_norm[RIGHT_SURROUND] ) * $surrmix_coef );
+
+	@output_sample_norm[LEFT] = ( @input_sample_norm[LEFT] + $non_LR ) * $gain_coef;
+	@output_sample_norm[RIGHT] = ( @input_sample_norm[RIGHT] + $non_LR ) * $gain_coef;
+	
+	if ( $debug_param ) {
+		print "output sample values (normalized):\n";
+		print "\t$output_sample_norm[LEFT]\n";
+		print "\t$output_sample_norm[RIGHT]\n\n";
+	}
+	
+	### this is where our analysis stuff would happen
+	### 	each output sample
+	### 		is value > 1.0 or < -1.0
+	### 		if either is, add to our excursions counter
+	### 		if absolute value is larger than previous largest excursion
+	### 			store this value there
+	### 	report this at the end
+	
+	### this is where our clipping handling would happen
+	## HARD CLIP
+	## (for now)
+	if ( @output_sample_norm[LEFT] > 1.0 ) { @output_sample_norm[LEFT] = 1; }
+	if ( @output_sample_norm[LEFT] < -1.0 ) { @output_sample_norm[LEFT] = -1; }
+	if ( @output_sample_norm[RIGHT] > 1.0 ) { @output_sample_norm[RIGHT] = 1; }
+	if ( @output_sample_norm[RIGHT] < -1.0 ) { @output_sample_norm[RIGHT] = -1; }
+	## may also want to do soft clipping/dynamic range compression
+	
+	### plus any filtering that we want to do
+	
+	# quantize to desired output bit depth
+	if ( $bitdepth_param eq 24 ) {
+		@output_sample[LEFT] = int( @output_sample_norm[LEFT] * 8388607 );
+		@output_sample[RIGHT] = int( @output_sample_norm[RIGHT] * 8388607 );
+	} else {
+		@output_sample[LEFT] = int( @output_sample_norm[LEFT] * 32767 );
+		@output_sample[RIGHT] = int( @output_sample_norm[RIGHT] * 32767 );
+	}
+	### this isn't exactly ideal - it precludes full scale negative values
+	
+	if ( $debug_param ) {
+		print "output sample values (quantized):\n";
+		print "\t$output_sample[LEFT]\n";
+		print "\t$output_sample[RIGHT]\n\n";
+	}
+	
+	# now we need to convert our sample values into data to write to file
+	if ( $bitdepth_param eq 24 ) {
+		### probably need to do a pack_24_bit_sample() sub
+		##### so for now, 24 bit output does not work
+	} else {
+		print OUTPUT pack( "s", @output_sample[LEFT] );
+		print OUTPUT pack( "s", @output_sample[RIGHT] );
+	}
+		
 }
-
-$result = read( RIGHT_CHANNEL, $buffer, $input_block_align );
-if ( @sample_rate[RIGHT] eq 24 ) {
-	@input_sample[RIGHT] = unpack_24_bit_sample( $buffer );
-} else {
-	@input_sample[RIGHT] = unpack( "s", $buffer );
-}
-
-$result = read( CENTER_CHANNEL, $buffer, $input_block_align );
-if ( @sample_rate[CENTER] eq 24 ) {
-	@input_sample[CENTER] = unpack_24_bit_sample( $buffer );
-} else {
-	@input_sample[CENTER] = unpack( "s", $buffer );
-}
-
-$result = read( LFE_CHANNEL, $buffer, $input_block_align );
-if ( @sample_rate[LFE] eq 24 ) {
-	@input_sample[LFE] = unpack_24_bit_sample( $buffer );
-} else {
-	@input_sample[LFE] = unpack( "s", $buffer );
-}
-
-$result = read( LEFT_SURROUND_CHANNEL, $buffer, $input_block_align );
-if ( @sample_rate[LEFT_SURROUND] eq 24 ) {
-	@input_sample[LEFT_SURROUND] = unpack_24_bit_sample( $buffer );
-} else {
-	@input_sample[LEFT_SURROUND] = unpack( "s", $buffer );
-}
-
-$result = read( RIGHT_SURROUND_CHANNEL, $buffer, $input_block_align );
-if ( @sample_rate[RIGHT_SURROUND] eq 24 ) {
-	@input_sample[RIGHT_SURROUND] = unpack_24_bit_sample( $buffer );
-} else {
-	@input_sample[RIGHT_SURROUND] = unpack( "s", $buffer );
-}
-
-
-print "***** $input_sample[LEFT] *****\n";
-print "***** $input_sample[RIGHT] *****\n";
-print "***** $input_sample[CENTER] *****\n";
-print "***** $input_sample[LFE] *****\n";
-print "***** $input_sample[LEFT_SURROUND] *****\n";
-print "***** $input_sample[RIGHT_SURROUND] *****\n\n";
-
-### TESTS
-
-
-#####
-
-# step through samples in input files
-# read sample from each file
-# convert to float values
-# 	make -1 .. 1 or 0 .. 1???
-# do downmix matrix
-# quantize to output bit depth
-# write L/R samples to output file
-# 
-
-#####
-
-
 
 
 # clean up
@@ -511,6 +625,7 @@ close( CENTER_CHANNEL );
 close( LFE_CHANNEL );
 close( LEFT_SURROUND_CHANNEL );
 close( RIGHT_SURROUND_CHANNEL );
+close( OUTPUT );
 
 ## subroutines
 
@@ -527,6 +642,10 @@ sub ceil {
 # dB_to_coef()
 # convert decibel value to a coefficient for adjusting sample values
 sub dB_to_coef { return( 10 ** ( @_[0] / 20 ) ); }
+
+sub quantize_sample {
+	return;
+}
 
 
 sub find_wave_files {
@@ -674,16 +793,3 @@ sub get_bit_depth {
 	$bits_per_sample = short_value( substr( $header, 14, 2 ) );
 	return( $bits_per_sample );
 }
-
-## block_align and byte_rate are calculated so no need to extract them
-##
-# 		# WAVE header values
-# 		$audio_format = short_value( substr( $header, 0, 2 ) );
-# 		$num_channels = short_value( substr( $header, 2, 2 ) );
-# 		$sample_rate = long_value( substr( $header, 4, 4 ) );
-# 		$byte_rate = long_value( substr( $header, 8, 4 ) );
-# 		$block_align = short_value( substr( $header, 12, 2 ) );
-# 		$bits_per_sample = short_value( substr( $header, 14, 2 ) );
-
-
-
