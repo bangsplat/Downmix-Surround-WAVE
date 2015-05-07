@@ -34,6 +34,7 @@ my ( $centermix_param, $surrmix_param, $lfemix_param, $gain_param );
 my ( $analyze_param, $normalize_param, $limit_param, $bitdepth_param );
 my $result;
 my ( @file_size, @channels, @sample_rate, @bit_depth, @sample_chunk_size, @num_samples );
+my ( $input_block_align, $input_byte_rate, $input_num_samples );
 # output file header values
 my $output_sub_chunk_1_size = 16;
 my $output_audio_foramt = 1;
@@ -42,6 +43,7 @@ my $output_sample_rate;			# use the input file sample rate
 my $output_bits_per_sample;		# defined by user
 my $output_block_align;			# calculated	= ceil( $num_channels * int( $bits_per_sample / 8 ) );
 my $output_byte_rate;			# calculated	= $sample_rate * $block_align;
+my $output_data_size;
 
 # $sub_chunk_1_size = 16;
 # $audio_format = 1;
@@ -240,22 +242,6 @@ if ( $output_param eq undef ) {
 }
 if ( $debug_param ) { print "DEBUG: output file name: $output_param\n"; }
 
-#####
-
-# validate that their spec is all the same (duration, bit depth, sampling rate, ???)
-# figure out how many samples there are
-# create output file
-# generate the output header
-# write output header
-# 
-# step through samples in input files
-# read sample from each file
-# convert to float values
-# do downmix matrix
-# write L/R samples to output file
-# 
-
-#####
 
 # open each input file and get their sizes
 
@@ -394,10 +380,61 @@ if ( ( @sample_chunk_size[LEFT] ne @sample_chunk_size[RIGHT] ) ||
 }
 ### for now, we're going to proceed, but we might want to error out in this case
 
+# figure out our output WAVE header values
+$output_sample_rate = @sample_rate[LEFT];						# use input file sampling rate
+$output_bits_per_sample = $bitdepth_param;						# use the requested bit depth
+$output_block_align = ceil( 2 * int( @bit_depth[LEFT] / 8 ) );	# calculate
+$output_byte_rate = $output_block_align * @sample_rate[LEFT];	# calculated
 
-# @num_samples[LEFT];
+# need to figure out how many samples total to expect
+$input_block_align = ceil( @channels[LEFT] * int( @bit_depth[LEFT] / 8 ) );
+$input_byte_rate = $input_block_align * @sample_rate[LEFT];
+$input_num_samples = @sample_chunk_size[LEFT] / $input_block_align;
 
-# OK, so now we know 
+# easy!
+
+# create output file
+if ( $debug_param ) { print "DEBUG: creating output file $output_param\n"; }
+open( OUTPUT, ">", $output_param ) or die "Can't open file $output_param\n";
+binmode( OUTPUT );
+
+# need to figure out how big our output data will be
+# which will determine how big our file will be
+$output_data_size = $output_block_align * $input_num_samples;
+
+# so now, we can write our RIFF and WAVE headers
+print OUTPUT "RIFF";
+print OUTPUT pack( 'L', ( $output_data_size + 36 ) );
+print OUTPUT "WAVE";
+print OUTPUT "fmt ";								# fmt chunk id
+print OUTPUT pack( 'L', 16 );						# sub chunk 1 size
+print OUTPUT pack( 'S', 1 );						# audio format
+print OUTPUT pack( 'S', 2 );						# num channels
+print OUTPUT pack( 'L', $output_sample_rate );		# sample rate
+print OUTPUT pack( 'L', $output_byte_rate );		# byte rate
+print OUTPUT pack( 'S', $output_block_align );		# block align
+print OUTPUT pack( 'S', $output_bits_per_sample );	# bits per sample
+
+# and then we can write out the start of the data chunk
+print OUTPUT "data";								# data chunk id
+print OUTPUT pack( 'L', $output_data_size );		# data chunk size
+
+# now all that's left is the audio data!
+# easy, right?!?!?
+# yeah...
+
+
+
+#####
+
+# step through samples in input files
+# read sample from each file
+# convert to float values
+# do downmix matrix
+# write L/R samples to output file
+# 
+
+#####
 
 
 
@@ -412,8 +449,17 @@ close( RIGHT_SURROUND_CHANNEL );
 
 ## subroutines
 
-# dB_to_coef
-#
+# ceil()
+# my quick-and-dirty version of the POSIX function
+# because the POSIX module seems to cause issues here for some reason
+sub ceil {
+	my $input_value = shift;
+	my $output_value = int( $input_value );
+	if ( ( $input_value - $output_value ) > 0 ) { $output_value++; }
+	return( $output_value );
+}
+
+# dB_to_coef()
 # convert decibel value to a coefficient for adjusting sample values
 sub dB_to_coef { return( 10 ** ( @_[0] / 20 ) ); }
 
