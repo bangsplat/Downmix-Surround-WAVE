@@ -434,28 +434,48 @@ print OUTPUT pack( 'L', $output_data_size );		# data chunk size
 
 
 ### TESTS:
-# note that the unpack command here works for 16 bit signed
-# but won't work for 24 bit
-# need to figure out how to make it universal
-# probably move to a subroutine
 
 $result = read( LEFT_CHANNEL, $buffer, $input_block_align );
-@input_sample[LEFT] = unpack( "s", $buffer );
+if ( @sample_rate[LEFT] eq 24 ) {
+	@input_sample[LEFT] = unpack_24_bit_sample( $buffer );
+} else {
+	@input_sample[LEFT] = unpack( "s", $buffer );
+}
 
 $result = read( RIGHT_CHANNEL, $buffer, $input_block_align );
-@input_sample[RIGHT] = unpack( "s", $buffer );
+if ( @sample_rate[RIGHT] eq 24 ) {
+	@input_sample[RIGHT] = unpack_24_bit_sample( $buffer );
+} else {
+	@input_sample[RIGHT] = unpack( "s", $buffer );
+}
 
 $result = read( CENTER_CHANNEL, $buffer, $input_block_align );
-@input_sample[CENTER] = unpack( "s", $buffer );
+if ( @sample_rate[CENTER] eq 24 ) {
+	@input_sample[CENTER] = unpack_24_bit_sample( $buffer );
+} else {
+	@input_sample[CENTER] = unpack( "s", $buffer );
+}
 
 $result = read( LFE_CHANNEL, $buffer, $input_block_align );
-@input_sample[LFE] = unpack( "s", $buffer );
+if ( @sample_rate[LFE] eq 24 ) {
+	@input_sample[LFE] = unpack_24_bit_sample( $buffer );
+} else {
+	@input_sample[LFE] = unpack( "s", $buffer );
+}
 
 $result = read( LEFT_SURROUND_CHANNEL, $buffer, $input_block_align );
-@input_sample[LEFT_SURROUND] = unpack( "s", $buffer );
+if ( @sample_rate[LEFT_SURROUND] eq 24 ) {
+	@input_sample[LEFT_SURROUND] = unpack_24_bit_sample( $buffer );
+} else {
+	@input_sample[LEFT_SURROUND] = unpack( "s", $buffer );
+}
 
 $result = read( RIGHT_SURROUND_CHANNEL, $buffer, $input_block_align );
-@input_sample[RIGHT_SURROUND] = unpack( "s", $buffer );
+if ( @sample_rate[RIGHT_SURROUND] eq 24 ) {
+	@input_sample[RIGHT_SURROUND] = unpack_24_bit_sample( $buffer );
+} else {
+	@input_sample[RIGHT_SURROUND] = unpack( "s", $buffer );
+}
 
 
 print "***** $input_sample[LEFT] *****\n";
@@ -463,13 +483,9 @@ print "***** $input_sample[RIGHT] *****\n";
 print "***** $input_sample[CENTER] *****\n";
 print "***** $input_sample[LFE] *****\n";
 print "***** $input_sample[LEFT_SURROUND] *****\n";
-print "***** $input_sample[RIGHT_SURROUND] *****\n";
+print "***** $input_sample[RIGHT_SURROUND] *****\n\n";
 
 ### TESTS
-
-
-# my ( @input_sample, @output_sample );
-# $result = read( $file_ptr, $buffer, 8 );
 
 
 #####
@@ -543,6 +559,27 @@ sub short_value {
 #	convert argument into little-endian unsigned long
 sub long_value {
 	return( unpack( "L<", $_[0] ) );
+}
+
+
+# 	unpack_24_bit_sample()
+# 	24 bit WAVE files use little-endian 24 bit signed integers
+# 	which is a challenge because it doesn't fit nicely into standard integer sizes (16, 32, 64)
+# 	convert a 3 byte read buffer to a numeric value
+sub unpack_24_bit_sample {
+	my $hex_string = unpack( "H*", @_[0] );		# make a hex string from the buffer value
+	
+	# it's stored in the file as a little-endian integer
+	# so we need to swap the bytes around
+	### this is a very hacky way to to do this, but it works
+	### there is certainly a more elegant perlesque approach
+	
+	my $le_hex_value = hex( substr( $hex_string, 4, 2 ) . substr( $hex_string, 2, 2 ) .substr( $hex_string, 0, 2 ) );
+
+	# if it's a negative number, do the two's complement conversion
+	if ( $le_hex_value >= 0x800000 ) { $le_hex_value -= 0x1000000; }
+	
+	return( $le_hex_value );
 }
 
 
