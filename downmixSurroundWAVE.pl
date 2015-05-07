@@ -31,9 +31,12 @@ my ( $directory_param, $output_param, $recurse_param, $help_param, $version_para
 my ( @wave_files, $num_wave_files );
 my ( $left_channel, $right_channel, $center_channel, $lfe_channel, $left_surround_channel, $right_surround_channel );
 my ( $centermix_param, $surrmix_param, $lfemix_param, $gain_param );
+my ( $centermix_coef, $surrmix_coef, $lfemix_coef, $gain_coef );
 my ( $analyze_param, $normalize_param, $limit_param, $bitdepth_param );
 my $result;
+my $buffer;
 my ( @file_size, @channels, @sample_rate, @bit_depth, @sample_chunk_size, @num_samples );
+my ( @input_sample, @output_sample );
 my ( $input_block_align, $input_byte_rate, $input_num_samples );
 # output file header values
 my $output_sub_chunk_1_size = 16;
@@ -44,15 +47,6 @@ my $output_bits_per_sample;		# defined by user
 my $output_block_align;			# calculated	= ceil( $num_channels * int( $bits_per_sample / 8 ) );
 my $output_byte_rate;			# calculated	= $sample_rate * $block_align;
 my $output_data_size;
-
-# $sub_chunk_1_size = 16;
-# $audio_format = 1;
-# $num_channels = 2;
-# $sample_rate = $left_sr;
-# $bits_per_sample = $left_bd;
-# $block_align = ceil( $num_channels * int( $bits_per_sample / 8 ) );
-# $byte_rate = $sample_rate * $block_align;
-
 
 # get command line options
 GetOptions( 'directory|d=s'	=>	\$directory_param,
@@ -171,13 +165,27 @@ if ( $debug_param ) {
 	print "version_param: $version_param\n\n";
 }
 
+$centermix_coef = dB_to_coef( $centermix_param );
+$surrmix_coef = dB_to_coef( $surrmix_param );
+$lfemix_coef = dB_to_coef( $lfemix_param );
+$gain_coef = dB_to_coef( $gain_param );
+
+if ( $debug_param ) {
+	print "DEBUG: downmix coefficients:\n";
+	print "centermix_coef: $centermix_coef\n";
+	print "surrmix_coef: $surrmix_coef\n";
+	print "lfemix_coef: $lfemix_coef\n";
+	print "gain_coef: $gain_coef\n\n";
+}
+
+
 # find all the WAVE files
 find( \&find_wave_files, "." );
 
 $num_wave_files = @wave_files;
 
 if ( $debug_param ) { print "DEBUG: Number of WAVE files found: $num_wave_files\n"; }
-if ( $debug_param ) { print "DEBUG: WAVE files: @wave_files\n"; }
+#if ( $debug_param ) { print "DEBUG: WAVE files: @wave_files\n"; }
 
 # find left channel
 for ( my $i = 0; $i < $num_wave_files; $i++ ) {
@@ -225,7 +233,7 @@ for ( my $i = 0; $i < $num_wave_files; $i++ ) {
 		$right_surround_channel = @wave_files[$i];
 	}
 }
-if ( $debug_param ) { print "DEBUG: Right surround WAVE file: $right_surround_channel\n"; }
+if ( $debug_param ) { print "DEBUG: Right surround WAVE file: $right_surround_channel\n\n"; }
 
 # make sure we have all the channels we need
 if ( $left_channel eq undef ) { die "ERROR: can't find left channel WAVE file\n"; }
@@ -240,7 +248,7 @@ if ( $output_param eq undef ) {
 	$output_param = $center_channel;
 	$output_param =~ s/_[^_]*?\.wav$/_stereo\.wav/i;
 }
-if ( $debug_param ) { print "DEBUG: output file name: $output_param\n"; }
+if ( $debug_param ) { print "DEBUG: output file name: $output_param\n\n"; }
 
 
 # open each input file and get their sizes
@@ -293,7 +301,7 @@ if ( $debug_param ) {
 	print "DEBUG: center channel size: $file_size[ CENTER ]\n";
 	print "DEBUG: LFE channel size: $file_size[ LFE ]\n";
 	print "DEBUG: left surround channel size: $file_size[ LEFT_SURROUND ]\n";
-	print "DEBUG: right surround channel size: $file_size[ RIGHT_SURROUND ]\n";
+	print "DEBUG: right surround channel size: $file_size[ RIGHT_SURROUND ]\n\n";
 }
 
 # check to see if they are all the same size
@@ -394,7 +402,7 @@ $input_num_samples = @sample_chunk_size[LEFT] / $input_block_align;
 # easy!
 
 # create output file
-if ( $debug_param ) { print "DEBUG: creating output file $output_param\n"; }
+if ( $debug_param ) { print "DEBUG: creating output file $output_param\n\n"; }
 open( OUTPUT, ">", $output_param ) or die "Can't open file $output_param\n";
 binmode( OUTPUT );
 
@@ -425,12 +433,53 @@ print OUTPUT pack( 'L', $output_data_size );		# data chunk size
 
 
 
+### TESTS:
+# note that the unpack command here works for 16 bit signed
+# but won't work for 24 bit
+# need to figure out how to make it universal
+# probably move to a subroutine
+
+$result = read( LEFT_CHANNEL, $buffer, $input_block_align );
+@input_sample[LEFT] = unpack( "s", $buffer );
+
+$result = read( RIGHT_CHANNEL, $buffer, $input_block_align );
+@input_sample[RIGHT] = unpack( "s", $buffer );
+
+$result = read( CENTER_CHANNEL, $buffer, $input_block_align );
+@input_sample[CENTER] = unpack( "s", $buffer );
+
+$result = read( LFE_CHANNEL, $buffer, $input_block_align );
+@input_sample[LFE] = unpack( "s", $buffer );
+
+$result = read( LEFT_SURROUND_CHANNEL, $buffer, $input_block_align );
+@input_sample[LEFT_SURROUND] = unpack( "s", $buffer );
+
+$result = read( RIGHT_SURROUND_CHANNEL, $buffer, $input_block_align );
+@input_sample[RIGHT_SURROUND] = unpack( "s", $buffer );
+
+
+print "***** $input_sample[LEFT] *****\n";
+print "***** $input_sample[RIGHT] *****\n";
+print "***** $input_sample[CENTER] *****\n";
+print "***** $input_sample[LFE] *****\n";
+print "***** $input_sample[LEFT_SURROUND] *****\n";
+print "***** $input_sample[RIGHT_SURROUND] *****\n";
+
+### TESTS
+
+
+# my ( @input_sample, @output_sample );
+# $result = read( $file_ptr, $buffer, 8 );
+
+
 #####
 
 # step through samples in input files
 # read sample from each file
 # convert to float values
+# 	make -1 .. 1 or 0 .. 1???
 # do downmix matrix
+# quantize to output bit depth
 # write L/R samples to output file
 # 
 
