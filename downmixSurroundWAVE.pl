@@ -18,11 +18,39 @@ use File::Find;
 # modified 2015-05-06
 # 
 
+# constants
+use constant LEFT => 0;
+use constant RIGHT => 1;
+use constant CENTER => 2;
+use constant LFE => 3;
+use constant LEFT_SURROUND => 4;
+use constant RIGHT_SURROUND => 5;
+
+# variables
 my ( $directory_param, $output_param, $recurse_param, $help_param, $version_param, $debug_param );
 my ( @wave_files, $num_wave_files );
 my ( $left_channel, $right_channel, $center_channel, $lfe_channel, $left_surround_channel, $right_surround_channel );
 my ( $centermix_param, $surrmix_param, $lfemix_param, $gain_param );
 my ( $analyze_param, $normalize_param, $limit_param, $bitdepth_param );
+my $result;
+my ( @file_size, @channels, @sample_rate, @bit_depth, @sample_chunk_size, @num_samples );
+# output file header values
+my $output_sub_chunk_1_size = 16;
+my $output_audio_foramt = 1;
+my $output_num_channels = 2;
+my $output_sample_rate;			# use the input file sample rate
+my $output_bits_per_sample;		# defined by user
+my $output_block_align;			# calculated	= ceil( $num_channels * int( $bits_per_sample / 8 ) );
+my $output_byte_rate;			# calculated	= $sample_rate * $block_align;
+
+# $sub_chunk_1_size = 16;
+# $audio_format = 1;
+# $num_channels = 2;
+# $sample_rate = $left_sr;
+# $bits_per_sample = $left_bd;
+# $block_align = ceil( $num_channels * int( $bits_per_sample / 8 ) );
+# $byte_rate = $sample_rate * $block_align;
+
 
 # get command line options
 GetOptions( 'directory|d=s'	=>	\$directory_param,
@@ -214,8 +242,6 @@ if ( $debug_param ) { print "DEBUG: output file name: $output_param\n"; }
 
 #####
 
-# open each input file
-# validate that they are all mono WAVE files
 # validate that their spec is all the same (duration, bit depth, sampling rate, ???)
 # figure out how many samples there are
 # create output file
@@ -231,10 +257,158 @@ if ( $debug_param ) { print "DEBUG: output file name: $output_param\n"; }
 
 #####
 
-# open each input file
+# open each input file and get their sizes
+
+# open left channel file
+$result = open( LEFT_CHANNEL, "<", $left_channel )
+	or die "$left_channel: error: could not open file $!\n";
+binmode( LEFT_CHANNEL );
+
+@file_size[ LEFT ] = -s LEFT_CHANNEL;
+
+# open right channel file
+$result = open( RIGHT_CHANNEL, "<", $right_channel )
+	or die "$right_channel: error: could not open file $!\n";
+binmode( RIGHT_CHANNEL );
+
+@file_size[ RIGHT ] = -s RIGHT_CHANNEL;
+
+# open center channel file
+$result = open( CENTER_CHANNEL, "<", $center_channel )
+	or die "$center_channel: error: could not open file $!\n";
+binmode( CENTER_CHANNEL );
+
+@file_size[ CENTER ] = -s CENTER_CHANNEL;
+
+# open LFE channel file
+$result = open( LFE_CHANNEL, "<", $lfe_channel )
+	or die "$lfe_channel: error: could not open file $!\n";
+binmode( LFE_CHANNEL );
+
+@file_size[ LFE ] = -s LFE_CHANNEL;
+
+# open left surround channel file
+$result = open( LEFT_SURROUND_CHANNEL, "<", $left_surround_channel )
+	or die "$left_surround_channel: error: could not open file $!\n";
+binmode( LEFT_SURROUND_CHANNEL );
+
+@file_size[ LEFT_SURROUND ] = -s LEFT_SURROUND_CHANNEL;
+
+# open right surround channel file
+$result = open( RIGHT_SURROUND_CHANNEL, "<", $right_surround_channel )
+	or die "$right_surround_channel: error: could not open file $!\n";
+binmode( RIGHT_SURROUND_CHANNEL );
+
+@file_size[ RIGHT_SURROUND ] = -s RIGHT_SURROUND_CHANNEL;
+
+if ( $debug_param ) {
+	print "DEBUG: left channel size: $file_size[ LEFT ]\n";
+	print "DEBUG: right channel size: $file_size[ RIGHT ]\n";
+	print "DEBUG: center channel size: $file_size[ CENTER ]\n";
+	print "DEBUG: LFE channel size: $file_size[ LFE ]\n";
+	print "DEBUG: left surround channel size: $file_size[ LEFT_SURROUND ]\n";
+	print "DEBUG: right surround channel size: $file_size[ RIGHT_SURROUND ]\n";
+}
+
+# check to see if they are all the same size
+if ( ( @file_size[LEFT] ne @file_size[RIGHT] ) || ( @file_size[LEFT] ne @file_size[CENTER] ) ||
+	( @file_size[LEFT] ne @file_size[LFE] ) || ( @file_size[LEFT] ne @file_size[LEFT_SURROUND] ) ||
+	( @file_size[LEFT] ne @file_size[RIGHT_SURROUND] ) ) {
+	
+	print "WARNING: input files are not the same size\n";
+}
+### for now, we're going to proceed, but we might want to error out in this case
+
+
+## let's do this in a really inefficient way for the moment :)
+## but at least we only have to do it once
+
+# number of channels
+@channels[LEFT] = get_num_channels( \*LEFT_CHANNEL );
+@channels[RIGHT] = get_num_channels( \*RIGHT_CHANNEL );
+@channels[CENTER] = get_num_channels( \*CENTER_CHANNEL );
+@channels[LFE] = get_num_channels( \*LFE_CHANNEL );
+@channels[LEFT_SURROUND] = get_num_channels( \*LEFT_SURROUND_CHANNEL );
+@channels[RIGHT_SURROUND] = get_num_channels( \*RIGHT_SURROUND_CHANNEL );
+
+if ( ( @channels[LEFT] ne @channels[RIGHT] ) || ( @channels[LEFT] ne @channels[CENTER] ) ||
+	( @channels[LEFT] ne @channels[LFE] ) || ( @channels[LEFT] ne @channels[LEFT_SURROUND] ) ||
+	( @channels[LEFT] ne @channels[RIGHT_SURROUND] ) ) {
+	
+	print "WARNING: not all input files are mono\n";
+}
+### for now, we're going to proceed, but we might want to error out in this case
+
+# sampling rate
+@sample_rate[LEFT] = get_sample_rate( \*LEFT_CHANNEL );
+@sample_rate[RIGHT] = get_sample_rate( \*RIGHT_CHANNEL );
+@sample_rate[CENTER] = get_sample_rate( \*CENTER_CHANNEL );
+@sample_rate[LFE] = get_sample_rate( \*LFE_CHANNEL );
+@sample_rate[LEFT_SURROUND] = get_sample_rate( \*LEFT_SURROUND_CHANNEL );
+@sample_rate[RIGHT_SURROUND] = get_sample_rate( \*RIGHT_SURROUND_CHANNEL );
+
+if ( ( @sample_rate[LEFT] ne @sample_rate[RIGHT] ) || ( @sample_rate[LEFT] ne @sample_rate[CENTER] ) ||
+	( @sample_rate[LEFT] ne @sample_rate[LFE] ) || ( @sample_rate[LEFT] ne @sample_rate[LEFT_SURROUND] ) ||
+	( @sample_rate[LEFT] ne @sample_rate[RIGHT_SURROUND] ) ) {
+	
+	print "WARNING: not all input files are the same sampling rate\n";
+}
+### for now, we're going to proceed, but we might want to error out in this case
+
+# bit depth
+@bit_depth[LEFT] = get_bit_depth( \*LEFT_CHANNEL );
+@bit_depth[RIGHT] = get_bit_depth( \*RIGHT_CHANNEL );
+@bit_depth[CENTER] = get_bit_depth( \*CENTER_CHANNEL );
+@bit_depth[LFE] = get_bit_depth( \*LFE_CHANNEL );
+@bit_depth[LEFT_SURROUND] = get_bit_depth( \*LEFT_SURROUND_CHANNEL );
+@bit_depth[RIGHT_SURROUND] = get_bit_depth( \*RIGHT_SURROUND_CHANNEL );
+
+if ( ( @bit_depth[LEFT] ne @bit_depth[RIGHT] ) ||
+	( @bit_depth[LEFT] ne @bit_depth[CENTER] ) ||
+	( @bit_depth[LEFT] ne @bit_depth[LFE] ) ||
+	( @bit_depth[LEFT] ne @bit_depth[LEFT_SURROUND] ) ||
+	( @bit_depth[LEFT] ne @bit_depth[RIGHT_SURROUND] ) ) {
+	
+	print "WARNING: not all input files are the same bit depth\n";
+}
+### for now, we're going to proceed, but we might want to error out in this case
+
+# we can use the left channel values for the output header, adjusted for stereo
+
+# @sample_chunk_size
+# for each file, find the data chunk and remember how many bytes long it is
+@sample_chunk_size[LEFT] = find_WAVE_data( \*LEFT_CHANNEL );
+@sample_chunk_size[RIGHT] = find_WAVE_data( \*RIGHT_CHANNEL );
+@sample_chunk_size[CENTER] = find_WAVE_data( \*CENTER_CHANNEL );
+@sample_chunk_size[LFE] = find_WAVE_data( \*LFE_CHANNEL );
+@sample_chunk_size[LEFT_SURROUND] = find_WAVE_data( \*LEFT_SURROUND_CHANNEL );
+@sample_chunk_size[RIGHT_SURROUND] = find_WAVE_data( \*RIGHT_SURROUND_CHANNEL );
+
+if ( ( @sample_chunk_size[LEFT] ne @sample_chunk_size[RIGHT] ) ||
+	( @sample_chunk_size[LEFT] ne @sample_chunk_size[CENTER] ) ||
+	( @sample_chunk_size[LEFT] ne @sample_chunk_size[LFE] ) ||
+	( @sample_chunk_size[LEFT] ne @sample_chunk_size[LEFT_SURROUND] ) ||
+	( @sample_chunk_size[LEFT] ne @sample_chunk_size[RIGHT_SURROUND] ) ) {
+	
+	print "WARNING: not all input files have the same data chunk size\n";
+}
+### for now, we're going to proceed, but we might want to error out in this case
+
+
+# @num_samples[LEFT];
+
+# OK, so now we know 
 
 
 
+
+# clean up
+close( LEFT_CHANNEL );
+close( RIGHT_CHANNEL );
+close( CENTER_CHANNEL );
+close( LFE_CHANNEL );
+close( LEFT_SURROUND_CHANNEL );
+close( RIGHT_SURROUND_CHANNEL );
 
 ## subroutines
 
@@ -263,4 +437,121 @@ sub clean_path {
 	###
 
 }
+
+#	short_value()
+#	convert argument into little-endian unsigned short
+sub short_value {
+	return( unpack( "S<", $_[0] ) );
+}
+
+#	long_value()
+#	convert argument into little-endian unsigned long
+sub long_value {
+	return( unpack( "L<", $_[0] ) );
+}
+
+
+sub find_WAVE_header {
+	my $file_ptr = @_[0];
+	my $done = 0;
+	my ( $result, $buffer, $result, $read_chunk_id, $read_chunk_size );
+	
+	seek( $file_ptr, 12, 0 );						# skip past the end of the RIFF header
+	
+	while( !$done ) {
+		$result = read( $file_ptr, $buffer, 8 );
+		if ( $result eq 0 ) {						# end of file
+			seek( $file_ptr, 0, 0 );				# rewind file
+			return( 0 );							# return 0, which indicates an error
+		}
+		
+		$read_chunk_id = substr( $buffer, 0, 4 );						# get chunk ID
+		$read_chunk_size = long_value( substr( $buffer, 4, 4 ) );		# get chunk size
+		
+		if ( $read_chunk_id eq "fmt " ) { return( $read_chunk_size ); }	# return chunk size
+		else { seek( $file_ptr, $read_chunk_size, 1 ); }				# seek to next chunk
+	}
+}
+
+sub find_WAVE_data {
+	my $file_ptr = @_[0];
+	my $done = 0;
+	my ( $result, $buffer, $result, $read_chunk_id, $read_chunk_size );
+	
+	seek( $file_ptr, 12, 0 );						# skip past the end of the RIFF header
+	
+	while( !$done ) {
+		$result = read( $file_ptr, $buffer, 8 );
+		if ( $result eq 0 ) {						# end of file
+			seek( $file_ptr, 0, 0 );				# rewind file
+			return( 0 );							# return 0, which indicates an error
+		}
+		
+		$read_chunk_id = substr( $buffer, 0, 4 );						# get chunk ID
+		$read_chunk_size = long_value( substr( $buffer, 4, 4 ) );		# get chunk size
+		
+		if ( $read_chunk_id eq "data" ) { return( $read_chunk_size ); }	# return chunk size
+		else { seek( $file_ptr, $read_chunk_size, 1 ); }				# seek to next chunk
+	}
+}
+
+sub get_num_channels {
+	my $file_ptr = shift;
+	my $header;
+	my $chunk_size;
+	my $result;
+	my $num_channels;
+	$chunk_size = find_WAVE_header( $file_ptr );
+	if ( $chunk_size ne 16 ) { print "WARNING: unusual size WAVE header found\n"; }
+	
+	$result = read( $file_ptr, $header, $chunk_size );
+	if ( $result eq undef ) { print "WARNING: could not read WAVE header\n"; }
+	
+	$num_channels = short_value( substr( $header, 2, 2 ) );
+	return( $num_channels );
+}
+
+sub get_sample_rate {
+	my $file_ptr = shift;
+	my $header;
+	my $chunk_size;
+	my $result;
+	my $sample_rate;
+	$chunk_size = find_WAVE_header( $file_ptr );
+	if ( $chunk_size ne 16 ) { print "WARNING: unusual size WAVE header found\n"; }
+	
+	$result = read( $file_ptr, $header, $chunk_size );
+	if ( $result eq undef ) { print "WARNING: could not read WAVE header\n"; }
+	
+	$sample_rate = long_value( substr( $header, 4, 4 ) );
+	return( $sample_rate );
+}
+
+sub get_bit_depth {
+	my $file_ptr = shift;
+	my $header;
+	my $chunk_size;
+	my $result;
+	my $bits_per_sample;
+	$chunk_size = find_WAVE_header( $file_ptr );
+	if ( $chunk_size ne 16 ) { print "WARNING: unusual size WAVE header found\n"; }
+	
+	$result = read( $file_ptr, $header, $chunk_size );
+	if ( $result eq undef ) { print "WARNING: could not read WAVE header\n"; }
+	
+	$bits_per_sample = short_value( substr( $header, 14, 2 ) );
+	return( $bits_per_sample );
+}
+
+## block_align and byte_rate are calculated so no need to extract them
+##
+# 		# WAVE header values
+# 		$audio_format = short_value( substr( $header, 0, 2 ) );
+# 		$num_channels = short_value( substr( $header, 2, 2 ) );
+# 		$sample_rate = long_value( substr( $header, 4, 4 ) );
+# 		$byte_rate = long_value( substr( $header, 8, 4 ) );
+# 		$block_align = short_value( substr( $header, 12, 2 ) );
+# 		$bits_per_sample = short_value( substr( $header, 14, 2 ) );
+
+
 
