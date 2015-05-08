@@ -3,6 +3,7 @@
 use strict;	# Enforce some good programming rules
 use Getopt::Long;
 use File::Find;
+use Time::localtime;
 
 #
 # Downmix-Surround-WAVE
@@ -13,9 +14,9 @@ use File::Find;
 # written by Theron Trowbridge
 # http://therontrowbridge.com
 #
-# version 0.2
+# version 0.3
 # created 2015-05-04
-# modified 2015-05-06
+# modified 2015-05-08
 # 
 
 # constants
@@ -36,7 +37,9 @@ my ( $analyze_param, $normalize_param, $limit_param, $bitdepth_param );
 my ( $result, $buffer, $done, $non_LR );
 my ( @file_size, @channels, @sample_rate, @bit_depth, @sample_chunk_size, @num_samples );
 my ( @input_sample, @input_sample_norm, @output_sample, @output_sample_norm );
+my ( @peak_value, @excursions, @peak_value_position );
 my ( $input_block_align, $input_byte_rate, $input_num_samples );
+my ( $start_time, $stop_time );
 # output file header values
 my $output_sub_chunk_1_size = 16;
 my $output_audio_foramt = 1;
@@ -82,13 +85,13 @@ if ( $debug_param ) {
 }
 
 if ( $version_param ) {
-	print "downmixSurroundWAVE.pl version 0.1\n";
+	print "downmixSurroundWAVE.pl version 0.3\n";
 	exit;
 }
 
 if ( $help_param ) {
 	print "downmixSurroundWAVE.pl\n";
-	print "version 0.1\n\n";
+	print "version 0.3\n\n";
 	print "--directory | -d <path>\n";
 	print "\toptional - defaults to current working directory\n";
 	print "--output | -o\n";
@@ -163,6 +166,9 @@ if ( $debug_param ) {
 	print "help_param: $help_param\n";
 	print "version_param: $version_param\n\n";
 }
+
+$start_time = time();
+if ( $debug_param ) { print "DEBUG: start time: $start_time\n\n"; }
 
 $centermix_coef = dB_to_coef( $centermix_param );
 $surrmix_coef = dB_to_coef( $surrmix_param );
@@ -432,6 +438,14 @@ print OUTPUT pack( 'L', $output_data_size );		# data chunk size
 
 ### we have to do a complete pass to analyze if we want to normalize the output
 
+# pre-set our peak analysis data
+@peak_value[LEFT] = 0;
+@peak_value[RIGHT] = 0;
+@peak_value_position[LEFT] = 0;
+@peak_value_position[RIGHT] = 0;
+@excursions[LEFT] = 0;
+@excursions[RIGHT] = 0;
+
 # step through all the samples in the input files
 for( my $i = 0; $i < $input_num_samples; $i++ ) {
 	# read one sample from each file
@@ -548,8 +562,8 @@ for( my $i = 0; $i < $input_num_samples; $i++ ) {
 	}
 	
 	# apply downmix matrix and gain
-# L = L -0 dB, C -3 dB, LFE -6 dB, (Ls + Rs -90 degrees) -9 dB
-# R = R -0 dB, C -3 dB, LFE -6 dB, (Ls + Rs +90 degrees) -9 dB
+	# L = L -0 dB, C -3 dB, LFE -6 dB, (Ls + Rs -90 degrees) -9 dB
+	# R = R -0 dB, C -3 dB, LFE -6 dB, (Ls + Rs +90 degrees) -9 dB
 	## left = LEFT + CENTER*centermix_param + LFE*lfemix_param + LEFT_SURROUND+RIGHT_SURROUND*surmix_param
 	## right = RIGHT + CENTER*centermix_param + LFE*lfemix_param + LEFT_SURROUND+RIGHT_SURROUND*surmix_param
 	
@@ -576,6 +590,33 @@ for( my $i = 0; $i < $input_num_samples; $i++ ) {
 	### 		if absolute value is larger than previous largest excursion
 	### 			store this value there
 	### 	report this at the end
+	
+	
+	# if either left or right channels go above 1 or below -1
+	# and the absolute value 
+	if ( ( @output_sample_norm[LEFT] > 1.0 ) || ( @output_sample_norm[LEFT] < -1.0 ) ) {
+		@excursions[LEFT] ++;	# count the excursion
+		if ( $debug_param ) {
+			print "DEBUG: excursion - left channel - sample $i - @output_sample_norm[LEFT] - abs: @peak_value[LEFT]\n";
+		}
+		# check to see if it's the biggest excursion so far
+		if ( abs( @output_sample_norm[LEFT] ) > @peak_value[LEFT] ) {
+			@peak_value[LEFT] = abs( @output_sample_norm[LEFT] );
+			@peak_value_position[LEFT] = $i;
+		}
+	}
+	if ( ( @output_sample_norm[RIGHT] > 1.0 ) || ( @output_sample_norm[RIGHT] < -1.0 ) ) {
+		@excursions[RIGHT] ++;	# count the excursion
+		if ( $debug_param ) {
+			print "DEBUG: excursion - left channel - sample $i - @output_sample_norm[RIGHT] - abs: @peak_value[RIGHT]\n";
+		}
+		# check to see if it's the biggest excursion so far
+		if ( abs( @output_sample_norm[RIGHT] ) > @peak_value[RIGHT] ) {
+			@peak_value[RIGHT] = abs( @output_sample_norm[RIGHT] );
+			@peak_value_position[RIGHT] = $i;
+		}
+	}
+	
 	
 	### this is where our clipping handling would happen
 	## HARD CLIP
@@ -612,9 +653,8 @@ for( my $i = 0; $i < $input_num_samples; $i++ ) {
 		print OUTPUT pack( "s", @output_sample[LEFT] );
 		print OUTPUT pack( "s", @output_sample[RIGHT] );
 	}
-		
+	
 }
-
 
 # clean up
 close( LEFT_CHANNEL );
@@ -624,6 +664,21 @@ close( LFE_CHANNEL );
 close( LEFT_SURROUND_CHANNEL );
 close( RIGHT_SURROUND_CHANNEL );
 close( OUTPUT );
+
+$stop_time = time();
+if ( $debug_param ) { print "DEBUG: stop time: $stop_time\n\n"; }
+
+
+# reporting
+print "Done in " . ( $stop_time - $start_time ) . " seconds\n";
+if ( ( @excursions[LEFT] > 0 ) || ( @excursions[RIGHT] > 0 ) ) {
+	print "WARNING: clipping detected\n";
+	print "left channel: $excursions[LEFT] samples clipped (" . sprintf( "%.2f", ( @excursions[LEFT] / $input_num_samples ) ) . "%), max peak: " . sprintf( "%.3f", @peak_value[LEFT] ) . " (+" . sprintf( "%.3f", coef_to_dB( @peak_value[LEFT] ) ) . " dB) at sample @peak_value_position[LEFT]\n";
+	print "right channel: $excursions[RIGHT] samples clipped (" . sprintf( "%.2f", ( @excursions[RIGHT] / $input_num_samples ) ) . "%), max peak: " . sprintf( "%.3f", @peak_value[RIGHT] ) . " (+" . sprintf( "%.3f", coef_to_dB( @peak_value[RIGHT] ) ) . " dB) at sample @peak_value_position[RIGHT]\n";
+} else {
+	print "no clipping detected\n";
+}
+
 
 ## subroutines
 
@@ -637,14 +692,32 @@ sub ceil {
 	return( $output_value );
 }
 
+sub log10 {
+	my $n = shift;
+	if ( $n == 0 ) { return( 0 ); }
+	return log($n)/log(10);
+}
+
 # dB_to_coef()
 # convert decibel value to a coefficient for adjusting sample values
 sub dB_to_coef { return( 10 ** ( @_[0] / 20 ) ); }
 
+# coef_to_dB()
+# convert a coefficient into dB
+sub coef_to_dB {
+	return( 20 * log10( @_[0] ) );
+}
+
+# 0.5 = 20*log10(0.5) = 20*(log(0.5)/log(10) = -6.02060 dB
+
+# quantize_sample()
+### WIP - doesn't do anything
+### need to do better rounding than the inline int() approach
+### possibly need to apply some sort of wave shaping
+### 	(need to figure out how to do that first, though)
 sub quantize_sample {
 	return;
 }
-
 
 sub find_wave_files {
 	if ( /\.wav$/i && ( $recurse_param || $File::Find::dir eq "." ) ) {
