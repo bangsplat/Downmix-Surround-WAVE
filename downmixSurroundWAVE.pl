@@ -430,9 +430,7 @@ print OUTPUT pack( 'L', $output_data_size );		# data chunk size
 # easy, right?!?!?
 # yeah, well...
 
-
 ### we have to do a complete pass to analyze if we want to normalize the output
-
 
 # step through all the samples in the input files
 for( my $i = 0; $i < $input_num_samples; $i++ ) {
@@ -608,8 +606,8 @@ for( my $i = 0; $i < $input_num_samples; $i++ ) {
 	
 	# now we need to convert our sample values into data to write to file
 	if ( $bitdepth_param eq 24 ) {
-		### probably need to do a pack_24_bit_sample() sub
-		##### so for now, 24 bit output does not work
+		print OUTPUT pack_24_bit_sample( @output_sample[LEFT] );
+		print OUTPUT pack_24_bit_sample( @output_sample[RIGHT] );
 	} else {
 		print OUTPUT pack( "s", @output_sample[LEFT] );
 		print OUTPUT pack( "s", @output_sample[RIGHT] );
@@ -701,6 +699,19 @@ sub unpack_24_bit_sample {
 	return( $le_hex_value );
 }
 
+# 	pack_24_bit_sample()
+#	the reverse of unpack_24_bit_sample()
+sub pack_24_bit_sample{
+	return( pack( "H*", substr( unpack( "H6", pack( "l", @_[0] ) ), 0, 6 ) ) );
+	
+	## OK, so here are the original steps:
+#	my $input = shift;									# get the input
+#	my $input_long = pack( "l", $input );				# pack it into a signed long integer
+#	my $long_hex_string = unpack( "H*", $input_long );	# turn that into a hex string
+#	my $hex_string = substr( $long_hex_string, 0, 6 );	# trim off the padded 4th byte
+#	my $output = pack( "H*", $hex_string );				# pack that back into an integer
+	## pack "l" does the byte swapping for us (yay)
+}
 
 sub find_WAVE_header {
 	my $file_ptr = @_[0];
