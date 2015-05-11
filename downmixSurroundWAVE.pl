@@ -14,9 +14,9 @@ use Time::localtime;
 # written by Theron Trowbridge
 # http://therontrowbridge.com
 #
-# version 0.3
+# version 0.4
 # created 2015-05-04
-# modified 2015-05-08
+# modified 2015-05-11
 # 
 
 # constants
@@ -85,13 +85,13 @@ if ( $debug_param ) {
 }
 
 if ( $version_param ) {
-	print "downmixSurroundWAVE.pl version 0.3\n";
+	print "downmixSurroundWAVE.pl version 0.4\n";
 	exit;
 }
 
 if ( $help_param ) {
 	print "downmixSurroundWAVE.pl\n";
-	print "version 0.3\n\n";
+	print "version 0.4\n\n";
 	print "--directory | -d <path>\n";
 	print "\toptional - defaults to current working directory\n";
 	print "--output | -o\n";
@@ -396,7 +396,7 @@ if ( ( @sample_chunk_size[LEFT] ne @sample_chunk_size[RIGHT] ) ||
 # figure out our output WAVE header values
 $output_sample_rate = @sample_rate[LEFT];						# use input file sampling rate
 $output_bits_per_sample = $bitdepth_param;						# use the requested bit depth
-$output_block_align = ceil( 2 * int( @bit_depth[LEFT] / 8 ) );	# calculate
+$output_block_align = ceil( 2 * int( $bitdepth_param / 8 ) );	# calculate
 $output_byte_rate = $output_block_align * @sample_rate[LEFT];	# calculated
 
 # need to figure out how many samples total to expect
